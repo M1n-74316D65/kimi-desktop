@@ -21,7 +21,9 @@
         "visible": false,
         "center": true,
         "decorations": true,
-        "transparent": false
+        "transparent": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       },
       {
         "label": "launcher",
