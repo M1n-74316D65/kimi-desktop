@@ -4,6 +4,8 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter,
 };
+#[cfg(target_os = "macos")]
+use tauri::TitleBarStyle;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 // JavaScript to inject custom styles that hide UI elements overlapping with title bar
@@ -73,6 +75,210 @@ fn get_hide_titlebar_overlap_js() -> String {
             document.documentElement, 
             { childList: true, subtree: true }
         );
+    })();
+    "#.to_string()
+}
+
+// JavaScript to inject custom titlebar for Windows and Linux (frameless window)
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn get_custom_titlebar_js() -> String {
+    r#"
+    (function() {
+        const TITLEBAR_ID = 'le-chat-custom-titlebar';
+        
+        function injectTitlebar() {
+            if (document.getElementById(TITLEBAR_ID)) return;
+            if (!document.body) {
+                setTimeout(injectTitlebar, 50);
+                return;
+            }
+            
+            const titlebar = document.createElement('div');
+            titlebar.id = TITLEBAR_ID;
+            titlebar.setAttribute('data-tauri-drag-region', '');
+            
+            titlebar.innerHTML = `
+                <style>
+                    /* Mistral-themed titlebar with dark/light mode support */
+                    #le-chat-custom-titlebar {
+                        position: fixed;
+                        top: 0;
+                        left: 0;
+                        right: 0;
+                        height: 32px;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        z-index: 999999;
+                        -webkit-app-region: drag;
+                        user-select: none;
+                        transition: background-color 0.2s, border-color 0.2s;
+                    }
+                    
+                    /* Dark mode (default for Mistral) */
+                    #le-chat-custom-titlebar {
+                        background: #18181b;
+                        border-bottom: 1px solid #27272a;
+                    }
+                    #le-chat-custom-titlebar .title {
+                        color: #a1a1aa;
+                        font-size: 12px;
+                        font-weight: 500;
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+                        padding-left: 12px;
+                        pointer-events: none;
+                    }
+                    #le-chat-custom-titlebar .controls {
+                        display: flex;
+                        height: 100%;
+                        -webkit-app-region: no-drag;
+                    }
+                    #le-chat-custom-titlebar button {
+                        width: 46px;
+                        height: 100%;
+                        border: none;
+                        background: transparent;
+                        color: #71717a;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        cursor: pointer;
+                        transition: background-color 0.15s, color 0.15s;
+                    }
+                    #le-chat-custom-titlebar button:hover {
+                        background: #27272a;
+                        color: #fafafa;
+                    }
+                    #le-chat-custom-titlebar button:active {
+                        background: #3f3f46;
+                    }
+                    #le-chat-custom-titlebar button.close:hover {
+                        background: #dc2626;
+                        color: #fff;
+                    }
+                    #le-chat-custom-titlebar button svg {
+                        width: 10px;
+                        height: 10px;
+                    }
+                    
+                    /* Light mode support */
+                    @media (prefers-color-scheme: light) {
+                        #le-chat-custom-titlebar {
+                            background: #fafafa;
+                            border-bottom: 1px solid #e4e4e7;
+                        }
+                        #le-chat-custom-titlebar .title {
+                            color: #52525b;
+                        }
+                        #le-chat-custom-titlebar button {
+                            color: #71717a;
+                        }
+                        #le-chat-custom-titlebar button:hover {
+                            background: #e4e4e7;
+                            color: #18181b;
+                        }
+                        #le-chat-custom-titlebar button:active {
+                            background: #d4d4d8;
+                        }
+                        #le-chat-custom-titlebar button.close:hover {
+                            background: #dc2626;
+                            color: #fff;
+                        }
+                    }
+                    
+                    /* Also detect Mistral's theme via html/body classes */
+                    html.light #le-chat-custom-titlebar,
+                    body.light #le-chat-custom-titlebar,
+                    [data-theme="light"] #le-chat-custom-titlebar {
+                        background: #fafafa;
+                        border-bottom: 1px solid #e4e4e7;
+                    }
+                    html.light #le-chat-custom-titlebar .title,
+                    body.light #le-chat-custom-titlebar .title,
+                    [data-theme="light"] #le-chat-custom-titlebar .title {
+                        color: #52525b;
+                    }
+                    html.light #le-chat-custom-titlebar button,
+                    body.light #le-chat-custom-titlebar button,
+                    [data-theme="light"] #le-chat-custom-titlebar button {
+                        color: #71717a;
+                    }
+                    html.light #le-chat-custom-titlebar button:hover,
+                    body.light #le-chat-custom-titlebar button:hover,
+                    [data-theme="light"] #le-chat-custom-titlebar button:hover {
+                        background: #e4e4e7;
+                        color: #18181b;
+                    }
+                    html.light #le-chat-custom-titlebar button.close:hover,
+                    body.light #le-chat-custom-titlebar button.close:hover,
+                    [data-theme="light"] #le-chat-custom-titlebar button.close:hover {
+                        background: #dc2626;
+                        color: #fff;
+                    }
+                    
+                    /* Push body content down to avoid overlap */
+                    html, body {
+                        padding-top: 32px !important;
+                    }
+                    /* Adjust sidebar header for Windows/Linux */
+                    div[data-sidebar="header"] {
+                        padding-top: 0.5rem !important;
+                    }
+                </style>
+                <span class="title">Le Chat</span>
+                <div class="controls">
+                    <button id="lc-tb-minimize" title="Minimize">
+                        <svg viewBox="0 0 10 1">
+                            <rect fill="currentColor" width="10" height="1"/>
+                        </svg>
+                    </button>
+                    <button id="lc-tb-maximize" title="Maximize">
+                        <svg viewBox="0 0 10 10">
+                            <rect fill="none" stroke="currentColor" stroke-width="1" width="9" height="9" x="0.5" y="0.5"/>
+                        </svg>
+                    </button>
+                    <button id="lc-tb-close" class="close" title="Close">
+                        <svg viewBox="0 0 10 10">
+                            <path fill="currentColor" d="M1.41 0L0 1.41 3.59 5 0 8.59 1.41 10 5 6.41 8.59 10 10 8.59 6.41 5 10 1.41 8.59 0 5 3.59z"/>
+                        </svg>
+                    </button>
+                </div>
+            `;
+            
+            document.body.prepend(titlebar);
+            
+            // Wire up buttons using Tauri API
+            const { getCurrentWindow } = window.__TAURI__.window;
+            const appWindow = getCurrentWindow();
+            
+            document.getElementById('lc-tb-minimize').onclick = (e) => {
+                e.preventDefault();
+                appWindow.minimize();
+            };
+            document.getElementById('lc-tb-maximize').onclick = (e) => {
+                e.preventDefault();
+                appWindow.toggleMaximize();
+            };
+            document.getElementById('lc-tb-close').onclick = (e) => {
+                e.preventDefault();
+                appWindow.hide(); // Hide instead of close - app stays in tray
+            };
+            
+            console.log('[Le Chat] Custom titlebar injected');
+        }
+        
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', injectTitlebar);
+        } else {
+            injectTitlebar();
+        }
+        
+        // Re-inject on navigation (SPA)
+        new MutationObserver(() => {
+            if (!document.getElementById(TITLEBAR_ID)) {
+                injectTitlebar();
+            }
+        }).observe(document.documentElement, { childList: true, subtree: true });
     })();
     "#.to_string()
 }
@@ -385,10 +591,24 @@ pub fn run() {
                 });
             }
             
-            // Inject custom styles to hide UI elements overlapping with title bar
+            // Platform-specific window configuration and style injection
             if let Some(main_window) = app.get_webview_window("main") {
-                let js = get_hide_titlebar_overlap_js();
-                let _ = main_window.eval(&js);
+                #[cfg(target_os = "macos")]
+                {
+                    // macOS: Use overlay title bar style with hidden title
+                    let _ = main_window.set_title_bar_style(TitleBarStyle::Overlay);
+                    // Inject CSS to hide UI elements overlapping with traffic lights
+                    let js = get_hide_titlebar_overlap_js();
+                    let _ = main_window.eval(&js);
+                }
+                
+                #[cfg(any(target_os = "windows", target_os = "linux"))]
+                {
+                    // Windows/Linux: Remove native decorations and inject custom titlebar
+                    let _ = main_window.set_decorations(false);
+                    let js = get_custom_titlebar_js();
+                    let _ = main_window.eval(&js);
+                }
             }
             
             Ok(())
