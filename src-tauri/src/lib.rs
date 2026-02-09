@@ -6,6 +6,77 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+// JavaScript to inject custom styles that hide UI elements overlapping with title bar
+fn get_hide_titlebar_overlap_js() -> String {
+    r#"
+    (function() {
+        const STYLE_ID = 'le-chat-custom-styles';
+        
+        function injectStyles() {
+            // Avoid duplicate injection
+            if (document.getElementById(STYLE_ID)) return;
+            
+            const style = document.createElement('style');
+            style.id = STYLE_ID;
+            style.textContent = `
+                /* Hide the workspace menu button that overlaps title bar */
+                div[data-sidebar="header"] button[aria-haspopup="menu"] {
+                    display: none !important;
+                }
+                
+                /* Hide the flex-1 wrapper containing the workspace button */
+                div[data-sidebar="header"] .flex-1:has(button[aria-haspopup="menu"]) {
+                    display: none !important;
+                }
+                
+                /* Make the button container full width and push buttons to the right */
+                div[data-sidebar="header"] > div.flex {
+                    width: 100% !important;
+                    justify-content: flex-end !important;
+                }
+                
+                /* Add top padding to sidebar header to clear macOS traffic lights */
+                div[data-sidebar="header"] {
+                    padding-top: 2.5rem !important;
+                }
+            `;
+            document.head.appendChild(style);
+            
+            // Fallback for browsers without :has() support
+            document.querySelectorAll('div[data-sidebar="header"] button[aria-haspopup="menu"]').forEach(btn => {
+                btn.style.display = 'none';
+                // Also hide the flex-1 wrapper parent
+                const wrapper = btn.closest('.flex-1');
+                if (wrapper) {
+                    wrapper.style.display = 'none';
+                }
+            });
+            
+            // Push buttons to the right (fallback)
+            document.querySelectorAll('div[data-sidebar="header"] > div.flex').forEach(container => {
+                container.style.width = '100%';
+                container.style.justifyContent = 'flex-end';
+            });
+            
+            console.log('[Le Chat] Custom styles injected');
+        }
+        
+        // Retry until DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', injectStyles);
+        } else {
+            injectStyles();
+        }
+        
+        // Re-inject on dynamic navigation (React SPA)
+        new MutationObserver(() => injectStyles()).observe(
+            document.documentElement, 
+            { childList: true, subtree: true }
+        );
+    })();
+    "#.to_string()
+}
+
 // JavaScript to inject message into Mistral's chat input with retry logic
 fn get_inject_message_js(message: &str) -> String {
     let escaped_message = message
@@ -312,6 +383,12 @@ pub fn run() {
                         }
                     }
                 });
+            }
+            
+            // Inject custom styles to hide UI elements overlapping with title bar
+            if let Some(main_window) = app.get_webview_window("main") {
+                let js = get_hide_titlebar_overlap_js();
+                let _ = main_window.eval(&js);
             }
             
             Ok(())
