@@ -36,7 +36,7 @@ impl Default for AppSettings {
 fn get_hide_titlebar_overlap_js() -> String {
     r#"
     (function() {
-        const STYLE_ID = 'le-chat-custom-styles';
+        const STYLE_ID = 'kimi-custom-styles';
         
         function injectStyles() {
             // Avoid duplicate injection
@@ -45,46 +45,21 @@ fn get_hide_titlebar_overlap_js() -> String {
             const style = document.createElement('style');
             style.id = STYLE_ID;
             style.textContent = `
-                /* Hide the workspace menu button that overlaps title bar */
-                div[data-sidebar="header"] button[aria-haspopup="menu"] {
+                /* Hide UI elements that might overlap with title bar */
+                .app-header > button:first-child,
+                header button:first-child {
                     display: none !important;
                 }
                 
-                /* Hide the flex-1 wrapper containing the workspace button */
-                div[data-sidebar="header"] .flex-1:has(button[aria-haspopup="menu"]) {
-                    display: none !important;
-                }
-                
-                /* Make the button container full width and push buttons to the right */
-                div[data-sidebar="header"] > div.flex {
-                    width: 100% !important;
-                    justify-content: flex-end !important;
-                }
-                
-                /* Add top padding to sidebar header to clear macOS traffic lights */
-                div[data-sidebar="header"] {
+                /* Add top padding to header to clear macOS traffic lights */
+                .app-header,
+                header {
                     padding-top: 2.5rem !important;
                 }
             `;
             document.head.appendChild(style);
             
-            // Fallback for browsers without :has() support
-            document.querySelectorAll('div[data-sidebar="header"] button[aria-haspopup="menu"]').forEach(btn => {
-                btn.style.display = 'none';
-                // Also hide the flex-1 wrapper parent
-                const wrapper = btn.closest('.flex-1');
-                if (wrapper) {
-                    wrapper.style.display = 'none';
-                }
-            });
-            
-            // Push buttons to the right (fallback)
-            document.querySelectorAll('div[data-sidebar="header"] > div.flex').forEach(container => {
-                container.style.width = '100%';
-                container.style.justifyContent = 'flex-end';
-            });
-            
-            console.log('[Le Chat] Custom styles injected');
+            console.log('[Kimi] Custom styles injected');
         }
         
         // Retry until DOM is ready
@@ -103,7 +78,7 @@ fn get_hide_titlebar_overlap_js() -> String {
     "#.to_string()
 }
 
-// JavaScript to inject message into Mistral's chat input with retry logic
+// JavaScript to inject message into Kimi's chat input with retry logic
 // Emits 'inject-result' Tauri event with { success: bool, error?: string }
 fn get_inject_message_js(message: &str) -> String {
     let escaped_message = message
@@ -117,6 +92,8 @@ fn get_inject_message_js(message: &str) -> String {
         r#"
         (function() {{
             const message = `{}`;
+            console.log('[Kimi] Raw message received:', message);
+            console.log('[Kimi] Message length:', message.length);
             const maxRetries = 15;
             const retryDelay = 300;
             const totalTimeout = 8000;
@@ -134,47 +111,106 @@ fn get_inject_message_js(message: &str) -> String {
             const timeoutId = setTimeout(() => {{
                 timedOut = true;
                 const msg = 'Message injection timed out after ' + totalTimeout + 'ms';
-                console.error('[Le Chat]', msg);
+                console.error('[Kimi]', msg);
                 emitResult(false, msg);
             }}, totalTimeout);
             
             function findTextarea() {{
-                return document.querySelector('textarea[placeholder*="Ask"]')
+                // Kimi uses a contenteditable div with class "chat-input-editor"
+                return document.querySelector('.chat-input-editor')
+                    || document.querySelector('div[contenteditable="true"]')
+                    || document.querySelector('textarea[placeholder*="Ask"]')
                     || document.querySelector('textarea[placeholder*="Message"]')
                     || document.querySelector('textarea[placeholder*="ask"]')
                     || document.querySelector('textarea[data-testid]')
-                    || document.querySelector('div[contenteditable="true"]')
                     || document.querySelector('textarea');
             }}
             
-            function injectMessage() {{
+            async function injectMessage() {{
                 if (timedOut) return;
+                
+                // Wait for page to be fully loaded and interactive
+                if (document.readyState !== 'complete') {{
+                    console.log('[Kimi] Page not ready yet, waiting...');
+                    await new Promise(resolve => {{
+                        window.addEventListener('load', resolve, {{ once: true }});
+                        // Fallback timeout in case load event already fired
+                        setTimeout(resolve, 500);
+                    }});
+                }}
+                
+                // Additional wait for React to initialize
+                await new Promise(r => setTimeout(r, 200));
                 
                 const textarea = findTextarea();
                 
                 if (!textarea) {{
                     retryCount++;
                     if (retryCount < maxRetries) {{
-                        console.log('[Le Chat] Waiting for textarea... attempt', retryCount);
+                        console.log('[Kimi] Waiting for textarea... attempt', retryCount);
                         setTimeout(injectMessage, retryDelay);
                         return;
                     }}
                     clearTimeout(timeoutId);
                     const msg = 'Could not find chat input after ' + maxRetries + ' attempts';
-                    console.error('[Le Chat]', msg);
+                    console.error('[Kimi]', msg);
                     emitResult(false, msg);
                     return;
                 }}
                 
-                console.log('[Le Chat] Found textarea:', textarea.tagName);
+                console.log('[Kimi] Found textarea:', textarea.tagName, 'class:', textarea.className);
+                console.log('[Kimi] Message to inject:', message);
                 
                 try {{
+                    // Handle Kimi's contenteditable div
+                    if (textarea.classList && textarea.classList.contains('chat-input-editor')) {{
+                        // Enable editing first
+                        textarea.contentEditable = 'true';
+                        
+                        // Focus
+                        textarea.focus();
+                        
+                        // Wait a bit for focus to take effect
+                        await new Promise(r => setTimeout(r, 50));
+                        
+                        // Clear existing content
+                        textarea.innerHTML = '';
+                        
+                        // Insert text using execCommand (most reliable for React)
+                        document.execCommand('insertText', false, message);
+                        
+                        console.log('[Kimi] Inserted text via execCommand:', message);
+                        console.log('[Kimi] Current textarea content:', textarea.innerText);
+                        
+                        // Only dispatch one input event
+                        textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        
+                        console.log('[Kimi] Submitting in 300ms');
+                        setTimeout(() => submitForm(textarea), 300);
+                        return;
+                    }}
+                    
                     // Handle contenteditable div (common in modern chat UIs)
                     if (textarea.contentEditable === 'true') {{
-                        textarea.innerHTML = message;
                         textarea.focus();
-                        textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                        setTimeout(() => submitForm(textarea), 200);
+                        textarea.innerHTML = '';
+                        const textNode = document.createTextNode(message);
+                        textarea.appendChild(textNode);
+                        
+                        const range = document.createRange();
+                        range.selectNodeContents(textarea);
+                        range.collapse(false);
+                        const selection = window.getSelection();
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                        
+                        textarea.dispatchEvent(new InputEvent('input', {{
+                            bubbles: true,
+                            inputType: 'insertText',
+                            data: message
+                        }}));
+                        
+                        setTimeout(() => submitForm(textarea), 300);
                         return;
                     }}
                     
@@ -194,34 +230,44 @@ fn get_inject_message_js(message: &str) -> String {
                     textarea.focus();
                     
                     // Submit after input is set
-                    setTimeout(() => submitForm(textarea), 200);
+                    setTimeout(() => submitForm(textarea), 300);
                 }} catch (err) {{
                     clearTimeout(timeoutId);
                     const msg = 'Failed to set message: ' + err.message;
-                    console.error('[Le Chat]', msg);
+                    console.error('[Kimi]', msg);
                     emitResult(false, msg);
                 }}
             }}
             
+            let submitted = false;
+            
             function submitForm(textarea) {{
-                if (timedOut) return;
+                if (timedOut || submitted) return;
+                submitted = true;
                 clearTimeout(timeoutId);
                 
+                console.log('[Kimi] Submitting form, textarea content:', textarea.innerText || textarea.value);
+                
                 // Look for send button - try multiple selectors
-                const sendBtn = document.querySelector('button[type="submit"]')
+                // Kimi uses .send-button-container
+                const sendBtn = document.querySelector('.send-button-container:not(.disabled)')
+                    || document.querySelector('.send-button-container')
+                    || document.querySelector('button[type="submit"]')
                     || document.querySelector('button[aria-label*="send" i]')
                     || document.querySelector('button[aria-label*="Send" i]')
                     || document.querySelector('button[data-testid*="send" i]')
                     || document.querySelector('form button:last-of-type')
                     || document.querySelector('button svg[class*="send" i]')?.closest('button');
                 
-                if (sendBtn && !sendBtn.disabled) {{
-                    console.log('[Le Chat] Clicking send button');
+                console.log('[Kimi] Send button found:', !!sendBtn);
+                
+                if (sendBtn) {{
+                    console.log('[Kimi] Clicking send button:', sendBtn.className);
                     sendBtn.click();
                     emitResult(true);
                 }} else {{
                     // If no button found, try pressing Enter
-                    console.log('[Le Chat] No send button, trying Enter key');
+                    console.log('[Kimi] No send button, trying Enter key');
                     if (textarea) {{
                         textarea.dispatchEvent(new KeyboardEvent('keydown', {{
                             key: 'Enter',
@@ -237,7 +283,10 @@ fn get_inject_message_js(message: &str) -> String {
             }}
             
             // Start the injection process immediately (no external delay needed)
-            injectMessage();
+            injectMessage().catch(err => {{
+                console.error('[Kimi] Injection error:', err);
+                emitResult(false, err.message);
+            }});
         }})();
     "#,
         escaped_message
@@ -279,7 +328,8 @@ async fn toggle_launcher(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-const CHAT_URL: &str = "https://chat.mistral.ai/chat";
+const CHAT_URL: &str = "https://www.kimi.com/";
+const BOT_URL: &str = "https://www.kimi.com/bot";
 
 // JavaScript to inject a MutationObserver that detects when the AI finishes responding.
 // It watches for the "stop generating" button to disappear, which signals completion.
@@ -287,8 +337,8 @@ const CHAT_URL: &str = "https://chat.mistral.ai/chat";
 fn get_response_watcher_js() -> String {
     r#"
     (function() {
-        if (window.__leChatResponseWatcher) return;
-        window.__leChatResponseWatcher = true;
+        if (window.__kimiResponseWatcher) return;
+        window.__kimiResponseWatcher = true;
         
         const CHECK_INTERVAL = 500;
         const INITIAL_DELAY = 2000;
@@ -312,7 +362,7 @@ fn get_response_watcher_js() -> String {
                 
                 if (checkCount > MAX_CHECKS) {
                     clearInterval(intervalId);
-                    window.__leChatResponseWatcher = false;
+                    window.__kimiResponseWatcher = false;
                     return;
                 }
                 
@@ -325,8 +375,8 @@ fn get_response_watcher_js() -> String {
                 // Streaming just stopped (was streaming, now it's not)
                 if (wasStreaming && !streaming) {
                     clearInterval(intervalId);
-                    window.__leChatResponseWatcher = false;
-                    console.log('[Le Chat] Response complete');
+                    window.__kimiResponseWatcher = false;
+                    console.log('[Kimi] Response complete');
                     if (window.__TAURI__) {
                         window.__TAURI__.event.emit('response-complete', {});
                     }
@@ -373,7 +423,7 @@ async fn navigate_to_chat(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn submit_message(app: AppHandle, message: String, new_chat: bool) -> Result<(), String> {
+async fn submit_message(app: AppHandle, message: String, new_chat: bool, bot_mode: bool) -> Result<(), String> {
     // Hide the launcher first
     if let Some(launcher) = app.get_webview_window("launcher") {
         launcher.hide().map_err(|e| e.to_string())?;
@@ -384,13 +434,20 @@ async fn submit_message(app: AppHandle, message: String, new_chat: bool) -> Resu
         main_window.show().map_err(|e| e.to_string())?;
         main_window.set_focus().map_err(|e| e.to_string())?;
 
-        if new_chat {
-            // Navigate to the base chat URL to start a fresh conversation.
-            // The injected JS retry logic will wait for the new page's textarea.
-            let url = CHAT_URL.parse::<tauri::Url>().map_err(|e| e.to_string())?;
+        if new_chat || bot_mode {
+            // Determine which URL to use based on bot_mode
+            let target_url = if bot_mode {
+                BOT_URL
+            } else {
+                CHAT_URL
+            };
+            
+            // Navigate to the appropriate URL
+            let url = target_url.parse::<tauri::Url>().map_err(|e| e.to_string())?;
             main_window.navigate(url).map_err(|e| e.to_string())?;
-            // Give the navigation a moment to start before injecting JS
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // Wait longer for new chat page to fully load and initialize
+            // Kimi's page needs more time to load React components
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
         } else {
             // Small delay to let the window become visible
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -445,7 +502,7 @@ async fn show_settings(app: AppHandle) -> Result<(), String> {
 }
 
 fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let show_item = MenuItem::with_id(app, "show", "Show Le Chat", true, None::<&str>)?;
+    let show_item = MenuItem::with_id(app, "show", "Show Kimi", true, None::<&str>)?;
     let launcher_item = MenuItem::with_id(app, "launcher", "Quick Ask...", true, None::<&str>)?;
     let separator1 = PredefinedMenuItem::separator(app)?;
     let settings_item = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
@@ -626,8 +683,8 @@ pub fn run() {
                         let _ = app_handle
                             .notification()
                             .builder()
-                            .title("Le Chat")
-                            .body("Response ready")
+                        .title("Kimi")
+                        .body("Response ready")
                             .show();
 
                         // Show main window (don't auto-focus — let user click notification)
@@ -683,37 +740,37 @@ pub fn run() {
             if let Some(main_window) = app.get_webview_window("main") {
                 let connectivity_js = r#"
                     (function() {
-                        const CHAT_URL = 'https://chat.mistral.ai/chat';
+                        const CHAT_URL = 'https://www.kimi.com/';
 
-                        // Check if Le Chat's service worker is registered
+                        // Check if Kimi's service worker is registered
                         async function checkServiceWorker() {
                             if (!('serviceWorker' in navigator)) {
-                                console.log('[Le Chat] Service workers not supported in this webview');
+                                console.log('[Kimi] Service workers not supported in this webview');
                                 return { supported: false, registered: false };
                             }
                             try {
                                 const registrations = await navigator.serviceWorker.getRegistrations();
                                 const hasSW = registrations.length > 0;
-                                console.log('[Le Chat] Service worker supported: true, registered:', hasSW,
+                                console.log('[Kimi] Service worker supported: true, registered:', hasSW,
                                     hasSW ? '(PWA active)' : '(no PWA cache yet)');
                                 for (const reg of registrations) {
-                                    console.log('[Le Chat]   SW scope:', reg.scope, 'state:',
+                                    console.log('[Kimi]   SW scope:', reg.scope, 'state:',
                                         reg.active ? 'active' : reg.installing ? 'installing' : reg.waiting ? 'waiting' : 'unknown');
                                 }
                                 return { supported: true, registered: hasSW };
                             } catch (e) {
-                                console.log('[Le Chat] Service worker check failed:', e.message);
+                                console.log('[Kimi] Service worker check failed:', e.message);
                                 return { supported: true, registered: false };
                             }
                         }
 
                         // Monitor online/offline events
                         window.addEventListener('offline', () => {
-                            console.log('[Le Chat] Browser went offline');
+                            console.log('[Kimi] Browser went offline');
                         });
                         window.addEventListener('online', () => {
-                            console.log('[Le Chat] Browser came online — reloading');
-                            if (window.location.href.includes('chat.mistral.ai')) {
+                            console.log('[Kimi] Browser came online — reloading');
+                            if (window.location.href.includes('www.kimi.com')) {
                                 window.location.reload();
                             } else {
                                 window.location.href = CHAT_URL;
@@ -741,21 +798,21 @@ pub fn run() {
                             const sw = await checkServiceWorker();
                             if (sw.registered) {
                                 // Reload guard: prevent infinite reload loop via sessionStorage flag
-                                const reloadKey = '__le_chat_sw_reload';
+                                const reloadKey = '__kimi_sw_reload';
                                 if (sessionStorage.getItem(reloadKey)) {
-                                    console.log('[Le Chat] Already tried SW reload — falling back to offline page');
+                                    console.log('[Kimi] Already tried SW reload — falling back to offline page');
                                     sessionStorage.removeItem(reloadKey);
                                     if (window.__TAURI__) {
                                         window.__TAURI__.core.invoke('navigate_to_offline').catch(() => {});
                                     }
                                 } else {
                                     sessionStorage.setItem(reloadKey, '1');
-                                    console.log('[Le Chat] Page failed but PWA service worker is active — reloading to use cache');
+                                    console.log('[Kimi] Page failed but PWA service worker is active — reloading to use cache');
                                     window.location.reload();
                                 }
                             } else {
                                 // No service worker (first launch or SW not installed) — local offline page
-                                console.log('[Le Chat] Page failed and no service worker — showing offline page');
+                                console.log('[Kimi] Page failed and no service worker — showing offline page');
                                 if (window.__TAURI__) {
                                     window.__TAURI__.core.invoke('navigate_to_offline').catch(() => {});
                                 }
@@ -888,7 +945,7 @@ mod tests {
     fn test_response_watcher_js_is_valid() {
         let js = get_response_watcher_js();
         assert!(!js.is_empty());
-        assert!(js.contains("__leChatResponseWatcher"));
+        assert!(js.contains("__kimiResponseWatcher"));
         assert!(js.contains("response-complete"));
         assert!(js.contains("isStreaming"));
     }
@@ -897,15 +954,15 @@ mod tests {
     fn test_hide_titlebar_overlap_js_is_valid() {
         let js = get_hide_titlebar_overlap_js();
         assert!(!js.is_empty());
-        assert!(js.contains("le-chat-custom-styles"));
+        assert!(js.contains("kimi-custom-styles"));
         assert!(js.contains("data-sidebar"));
         assert!(js.contains("MutationObserver"));
     }
 
     #[test]
     fn test_chat_url_constant() {
-        assert_eq!(CHAT_URL, "https://chat.mistral.ai/chat");
+        assert_eq!(CHAT_URL, "https://www.kimi.com/");
         assert!(CHAT_URL.starts_with("https://"));
-        assert!(CHAT_URL.contains("mistral.ai"));
+        assert!(CHAT_URL.contains("kimi.com"));
     }
 }

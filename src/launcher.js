@@ -1,4 +1,4 @@
-// Le Chat Launcher JavaScript
+// Kimi Launcher JavaScript
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
@@ -9,11 +9,13 @@ class LauncherApp {
     this.input = document.getElementById('launcher-input');
     this.submitBtn = document.getElementById('submit-btn');
     this.newChatToggle = document.getElementById('new-chat-toggle');
+    this.botModeToggle = document.getElementById('bot-mode-toggle');
     
     // State
     this.focusTimeout = null;
     this.isSubmitting = false;
     this.newChatMode = true; // Default: start new conversations
+    this.botMode = false; // Default: normal chat mode
     
     // Constants
     this.MAX_MESSAGE_LENGTH = 5000;
@@ -46,6 +48,11 @@ class LauncherApp {
     if (this.newChatToggle) {
       this.newChatToggle.title = `Start a new conversation (${modLabel}+N)`;
     }
+    
+    // Update the bot-mode toggle tooltip
+    if (this.botModeToggle) {
+      this.botModeToggle.title = `Open in Kimi Claw (${modLabel}+B)`;
+    }
   }
   
   initEventListeners() {
@@ -61,6 +68,11 @@ class LauncherApp {
     // New chat toggle
     if (this.newChatToggle) {
       this.newChatToggle.addEventListener('click', () => this.toggleNewChat());
+    }
+    
+    // Bot mode toggle
+    if (this.botModeToggle) {
+      this.botModeToggle.addEventListener('click', () => this.toggleBotMode());
     }
     
     // Window focus
@@ -96,7 +108,7 @@ class LauncherApp {
         }
         if (this.input) {
           this.input.placeholder = this.newChatMode
-            ? 'Ask Le Chat anything...'
+            ? 'Ask Kimi anything...'
             : 'Continue current chat...';
         }
       }
@@ -108,7 +120,7 @@ class LauncherApp {
     listen('inject-result', (event) => {
       const { success, error } = event.payload || {};
       if (!success && error) {
-        console.error('[Launcher] Message injection failed:', error);
+        console.error('[Kimi] Message injection failed:', error);
         this.showError(error);
       }
     }).catch(error => {
@@ -142,9 +154,7 @@ class LauncherApp {
     // Remove error state after animation completes
     setTimeout(() => {
       container.classList.remove('launcher-error');
-      if (this.input) {
-        this.input.placeholder = 'Ask Le Chat anything...';
-      }
+      this.updatePlaceholder();
     }, 2500);
   }
 
@@ -155,11 +165,7 @@ class LauncherApp {
       if (this.newChatToggle) {
         this.newChatToggle.classList.toggle('active', this.newChatMode);
       }
-      if (this.input) {
-        this.input.placeholder = this.newChatMode
-          ? 'Ask Le Chat anything...'
-          : 'Continue current chat...';
-      }
+      this.updatePlaceholder();
     } catch (error) {
       // Settings not available yet, use default
       console.warn('Failed to load settings, using defaults:', error);
@@ -187,6 +193,13 @@ class LauncherApp {
       if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         this.toggleNewChat();
+        return;
+      }
+      
+      // Cmd/Ctrl+B to toggle bot mode
+      if (e.key === 'b' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        this.toggleBotMode();
         return;
       }
       
@@ -230,10 +243,34 @@ class LauncherApp {
       this.newChatToggle.classList.toggle('active', this.newChatMode);
     }
     // Update placeholder to reflect mode
-    if (this.input) {
-      this.input.placeholder = this.newChatMode
-        ? 'Ask Le Chat anything...'
-        : 'Continue current chat...';
+    this.updatePlaceholder();
+  }
+  
+  toggleBotMode() {
+    this.botMode = !this.botMode;
+    if (this.botModeToggle) {
+      this.botModeToggle.classList.toggle('active', this.botMode);
+    }
+    // When bot mode is enabled, also enable new chat mode
+    if (this.botMode && !this.newChatMode) {
+      this.newChatMode = true;
+      if (this.newChatToggle) {
+        this.newChatToggle.classList.add('active');
+      }
+    }
+    // Update placeholder to reflect mode
+    this.updatePlaceholder();
+  }
+  
+  updatePlaceholder() {
+    if (!this.input) return;
+    
+    if (this.botMode) {
+      this.input.placeholder = 'Ask Kimi Claw...';
+    } else if (this.newChatMode) {
+      this.input.placeholder = 'Ask Kimi anything...';
+    } else {
+      this.input.placeholder = 'Continue current chat...';
     }
   }
   
@@ -280,7 +317,8 @@ class LauncherApp {
       
       // Send message to Rust backend with timeout
       const newChat = this.newChatMode;
-      const submitPromise = invoke('submit_message', { message, newChat });
+      const botMode = this.botMode;
+      const submitPromise = invoke('submit_message', { message, newChat, botMode });
       
       // Add timeout to prevent hanging
       const timeoutPromise = new Promise((_, reject) => {
