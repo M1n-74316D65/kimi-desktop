@@ -4,8 +4,8 @@ This document provides guidance for AI agents working on this codebase.
 
 ## Project Overview
 
-Le Chat is a Tauri v2 desktop application that wraps Mistral AI's chat interface
-(https://chat.mistral.ai/chat) with a native quick launcher feature. Built with
+Kimi Desktop is a Tauri v2 desktop application that wraps Moonshot AI's Kimi
+interface (https://kimi.com) with a native quick launcher feature. Built with
 Rust backend (Tauri) and vanilla HTML/CSS/JS frontend.
 
 ## Tech Stack
@@ -39,7 +39,7 @@ cd src-tauri && cargo test <name>  # Run a single Rust test
 ## Project Structure
 
 ```
-mistral-app/
+kimi-app/
 ├── src/                      # Frontend files
 │   ├── launcher.html         # Quick launcher UI
 │   ├── launcher.css          # Launcher styles (CSS variables)

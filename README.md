@@ -1,6 +1,6 @@
-# Le Chat - Mistral AI Desktop App
+# Kimi Desktop App
 
-A native desktop wrapper for [Le Chat](https://chat.mistral.ai/chat) (Mistral AI's chat interface) with a quick launcher feature inspired by Claude Desktop.
+A native desktop wrapper for [Kimi](https://kimi.com) (Moonshot AI's intelligent assistant) with a quick launcher feature inspired by Claude Desktop.
 
 ## Features
 
@@ -13,8 +13,8 @@ A native desktop wrapper for [Le Chat](https://chat.mistral.ai/chat) (Mistral AI
 ## Installation
 
 ### macOS
-1. Download `Le Chat_1.0.0_aarch64.dmg` from the releases
-2. Open the DMG and drag `Le Chat.app` to your Applications folder
+1. Download `Kimi_1.0.0_aarch64.dmg` from the releases
+2. Open the DMG and drag `Kimi.app` to your Applications folder
 3. Launch from Applications
 
 ### Windows
@@ -31,11 +31,11 @@ A native desktop wrapper for [Le Chat](https://chat.mistral.ai/chat) (Mistral AI
 
 ### Main Window
 - Click the tray icon to show the main window
-- Use the full Mistral AI chat interface
+- Use the full Kimi chat interface
 - Close the window to hide to tray (app keeps running)
 
 ### System Tray Menu
-- **Show Le Chat**: Open the main chat window
+- **Show Kimi**: Open the main chat window
 - **Quick Ask...**: Open the launcher
 - **Quit**: Exit the application
 
@@ -62,7 +62,7 @@ bun run build
 
 ### Project Structure
 ```
-mistral-app/
+kimi-app/
 ├── src/                      # Frontend files
 │   ├── launcher.html         # Quick launcher UI
 │   ├── launcher.css          # Launcher styles
@@ -81,9 +81,9 @@ mistral-app/
 ```
 
 ### Build Outputs
-- **macOS**: `src-tauri/target/release/bundle/macos/Le Chat.app`
-- **macOS DMG**: `src-tauri/target/release/bundle/dmg/Le Chat_1.0.0_aarch64.dmg`
-- **Windows**: `src-tauri/target/release/bundle/msi/Le Chat_1.0.0_x64.msi`
+- **macOS**: `src-tauri/target/release/bundle/macos/Kimi.app`
+- **macOS DMG**: `src-tauri/target/release/bundle/dmg/Kimi_1.0.0_aarch64.dmg`
+- **Windows**: `src-tauri/target/release/bundle/msi/Kimi_1.0.0_x64.msi`
 
 ## Configuration
 
@@ -109,5 +109,5 @@ MIT
 
 ## Credits
 
-- [Mistral AI](https://mistral.ai) for Le Chat
+- [Moonshot AI](https://moonshot.cn) for Kimi
 - [Tauri](https://tauri.app) for the framework

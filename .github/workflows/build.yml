@@ -92,7 +92,7 @@ jobs:
         if: matrix.platform == 'macos-latest'
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: Le-Chat-${{ matrix.name }}-app
+          name: Kimi-${{ matrix.name }}-app
           path: src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
           if-no-files-found: error
 
@@ -100,7 +100,7 @@ jobs:
         if: matrix.platform == 'macos-latest'
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: Le-Chat-${{ matrix.name }}-dmg
+          name: Kimi-${{ matrix.name }}-dmg
           path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
@@ -108,7 +108,7 @@ jobs:
         if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: Le-Chat-${{ matrix.name }}-msi
+          name: Kimi-${{ matrix.name }}-msi
           path: src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
           if-no-files-found: error
 
@@ -116,7 +116,7 @@ jobs:
         if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: Le-Chat-${{ matrix.name }}-exe
+          name: Kimi-${{ matrix.name }}-exe
           path: src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
           if-no-files-found: warn
 
@@ -124,7 +124,7 @@ jobs:
         if: matrix.platform == 'ubuntu-latest'
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: Le-Chat-${{ matrix.name }}-appimage
+          name: Kimi-${{ matrix.name }}-appimage
           path: src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
@@ -132,7 +132,7 @@ jobs:
         if: matrix.platform == 'ubuntu-latest'
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: Le-Chat-${{ matrix.name }}-deb
+          name: Kimi-${{ matrix.name }}-deb
           path: src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
           if-no-files-found: error
 
@@ -159,7 +159,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2.5.0
         with:
-          name: Le Chat ${{ github.ref_name }}
+          name: Kimi ${{ github.ref_name }}
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
           generate_release_notes: true
