@@ -434,20 +434,18 @@ async fn submit_message(app: AppHandle, message: String, new_chat: bool, bot_mod
         main_window.show().map_err(|e| e.to_string())?;
         main_window.set_focus().map_err(|e| e.to_string())?;
 
-        if new_chat || bot_mode {
-            // Determine which URL to use based on bot_mode
-            let target_url = if bot_mode {
-                BOT_URL
-            } else {
-                CHAT_URL
-            };
-            
-            // Navigate to the appropriate URL
-            let url = target_url.parse::<tauri::Url>().map_err(|e| e.to_string())?;
+        if bot_mode {
+            // Navigate to bot mode page
+            let url = BOT_URL.parse::<tauri::Url>().map_err(|e| e.to_string())?;
             main_window.navigate(url).map_err(|e| e.to_string())?;
-            // Wait longer for new chat page to fully load and initialize
-            // Kimi's page needs more time to load React components
+            // Wait longer for bot page to fully load and initialize
             tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        } else if new_chat {
+            // Navigate to root to start a new chat
+            let url = CHAT_URL.parse::<tauri::Url>().map_err(|e| e.to_string())?;
+            main_window.navigate(url).map_err(|e| e.to_string())?;
+            // Wait for page to load
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
         } else {
             // Small delay to let the window become visible
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;

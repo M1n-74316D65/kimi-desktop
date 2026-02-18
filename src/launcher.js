@@ -46,7 +46,7 @@ class LauncherApp {
     
     // Update the new-chat toggle tooltip
     if (this.newChatToggle) {
-      this.newChatToggle.title = `Start a new conversation (${modLabel}+N)`;
+      this.newChatToggle.title = `Start a new conversation (${modLabel}+K)`;
     }
     
     // Update the bot-mode toggle tooltip
@@ -189,8 +189,8 @@ class LauncherApp {
         return;
       }
       
-      // Cmd/Ctrl+N to toggle new chat mode
-      if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
+      // Cmd/Ctrl+K to toggle new chat mode
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         this.toggleNewChat();
         return;
