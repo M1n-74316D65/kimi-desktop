@@ -499,6 +499,11 @@ async fn show_settings(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn open_external_link(url: String) -> Result<(), String> {
+    tauri_plugin_opener::open_url(&url, None::<&str>).map_err(|e| e.to_string())
+}
+
 fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let show_item = MenuItem::with_id(app, "show", "Show Kimi", true, None::<&str>)?;
     let launcher_item = MenuItem::with_id(app, "launcher", "Quick Ask...", true, None::<&str>)?;
@@ -624,6 +629,7 @@ pub fn run() {
             get_settings,
             save_settings,
             show_settings,
+            open_external_link,
         ])
         .setup(|app| {
             // Setup system tray
@@ -832,7 +838,36 @@ pub fn run() {
                     let _ = main_window.eval(&js);
                 }
 
-
+                // Inject script to intercept external link clicks and open in default browser
+                let intercept_links_js = r#"
+                    (function() {
+                        if (window.__kimiLinkInterceptor) return;
+                        window.__kimiLinkInterceptor = true;
+                        
+                        document.addEventListener('click', function(e) {
+                            const link = e.target.closest('a[href]');
+                            if (!link) return;
+                            
+                            const href = link.getAttribute('href');
+                            if (!href) return;
+                            
+                            // Check if it's an external link (not kimi.com or relative)
+                            const isExternal = href.startsWith('http') && !href.includes('kimi.com') && !href.includes('moonshot.cn');
+                            const isMailto = href.startsWith('mailto:');
+                            
+                            if (isExternal || isMailto) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                if (window.__TAURI__) {
+                                    window.__TAURI__.core.invoke('open_external_link', { url: href }).catch(console.error);
+                                }
+                            }
+                        }, true);
+                        
+                        console.log('[Kimi] External link interceptor installed');
+                    })();
+                "#;
+                let _ = main_window.eval(intercept_links_js);
             }
 
             Ok(())
