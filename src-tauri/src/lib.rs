@@ -162,8 +162,53 @@ async fn show_settings(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Validates that a URL is safe to open externally
+/// Only allows http, https, and mailto schemes
+fn validate_external_url(url: &str) -> Result<(), String> {
+    // Check for javascript: URLs (XSS prevention)
+    if url.trim().to_lowercase().starts_with("javascript:") {
+        return Err("JavaScript URLs are not allowed".to_string());
+    }
+
+    // Check for data: URLs (potential security risk)
+    if url.trim().to_lowercase().starts_with("data:") {
+        return Err("Data URLs are not allowed".to_string());
+    }
+
+    // Check for file: URLs (local file access)
+    if url.trim().to_lowercase().starts_with("file:") {
+        return Err("File URLs are not allowed".to_string());
+    }
+
+    // Check for other dangerous schemes
+    let dangerous_schemes = ["vbscript:", "mhtml:", "x-javascript:"];
+    let url_lower = url.trim().to_lowercase();
+    for scheme in &dangerous_schemes {
+        if url_lower.starts_with(scheme) {
+            return Err(format!("{} URLs are not allowed", scheme.trim_end_matches(':')));
+        }
+    }
+
+    // Allow http, https, and mailto
+    let allowed_schemes = ["http://", "https://", "mailto:"];
+    let has_allowed_scheme = allowed_schemes
+        .iter()
+        .any(|scheme| url_lower.starts_with(scheme));
+
+    if !has_allowed_scheme {
+        return Err(
+            "URL must use http://, https://, or mailto: scheme".to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 async fn open_external_link(url: String) -> Result<(), String> {
+    // Validate URL before opening
+    validate_external_url(&url)?;
+
     tauri_plugin_opener::open_url(&url, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -537,5 +582,59 @@ mod tests {
     fn test_config_urls() {
         assert_eq!(Urls::CHAT, "https://www.kimi.com/");
         assert!(Urls::CHAT.starts_with("https://"));
+    }
+
+    #[test]
+    fn test_validate_external_url_accepts_https() {
+        assert!(validate_external_url("https://example.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_external_url_accepts_http() {
+        assert!(validate_external_url("http://example.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_external_url_accepts_mailto() {
+        assert!(validate_external_url("mailto:test@example.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_external_url_rejects_javascript() {
+        let result = validate_external_url("javascript:alert('xss')");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("JavaScript"));
+    }
+
+    #[test]
+    fn test_validate_external_url_rejects_data_url() {
+        let result = validate_external_url("data:text/html,<script>alert('xss')</script>");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Data URLs"));
+    }
+
+    #[test]
+    fn test_validate_external_url_rejects_file_url() {
+        let result = validate_external_url("file:///etc/passwd");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("File URLs"));
+    }
+
+    #[test]
+    fn test_validate_external_url_rejects_vbscript() {
+        let result = validate_external_url("vbscript:msgbox('test')");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_external_url_rejects_relative_url() {
+        let result = validate_external_url("/path/to/page");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_external_url_case_insensitive() {
+        assert!(validate_external_url("HTTPS://EXAMPLE.COM").is_ok());
+        assert!(validate_external_url("JAVASCRIPT:alert(1)").is_err());
     }
 }
