@@ -33,9 +33,6 @@ pub mod config {
         pub const STOP_BUTTON_ARIA_CAP: &str = "button[aria-label*=\"Stop\" i]";
         pub const CANCEL_BUTTON_ARIA: &str = "button[aria-label*=\"cancel\" i]";
         pub const STOP_BUTTON_DATA_TESTID: &str = "button[data-testid*=\"stop\" i]";
-        pub const APP_HEADER: &str = ".app-header";
-        pub const HEADER: &str = "header";
-        pub const HEADER_FIRST_BUTTON: &str = "header button:first-child";
         pub const DATA_SIDEBAR: &str = "[data-sidebar]";
     }
 
@@ -57,7 +54,6 @@ pub mod config {
         pub const RESPONSE_WATCHER_INITIAL_DELAY: u64 = 2000;
         pub const RESPONSE_WATCHER_MAX_CHECKS: u32 = 600;
         pub const INJECTION_MAX_RETRIES: u32 = 15;
-        pub const OFFLINE_NAVIGATION_DELAY: u64 = 200;
     }
 
     /// Application URLs

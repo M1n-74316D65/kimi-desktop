@@ -32,3 +32,8 @@ bun.lockb
 
 # Scripts
 scripts/
+
+# TypeScript build artifacts (source maps and declarations)
+src/**/*.js.map
+src/**/*.d.ts
+src/**/*.d.ts.map

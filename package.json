@@ -4,13 +4,24 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
-    "build": "tauri build",
-    "tauri": "tauri"
+    "dev": "tsc && tauri dev",
+    "build": "tsc && tauri build",
+    "tauri": "tauri",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/**/*.ts && cd src-tauri && cargo clippy -- -D warnings",
+    "format": "prettier --write \"src/**/*.{ts,js,json,css}\"",
+    "compile": "tsc"
   },
   "devDependencies": {
+    "@eslint/js": "^9.26.1",
     "@tauri-apps/cli": "^2",
-    "sharp": "^0.34.5"
+    "@types/node": "^22.15.18",
+    "eslint": "^9.26.1",
+    "eslint-config-prettier": "^10.1.5",
+    "prettier": "^3.6.1",
+    "sharp": "^0.34.5",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.32.1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1"
