@@ -3,10 +3,9 @@ use tauri::TitleBarStyle;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Listener, Manager, RunEvent,
+    AppHandle, Listener, Manager, RunEvent,
 };
-// TODO: Migrate from `cocoa`/`objc` to `objc2`/`icrate` crates when Tauri ecosystem supports it.
-// The `cocoa` crate marks these APIs as deprecated in favor of the objc2 ecosystem.
+
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
 use cocoa::appkit::{NSColor, NSWindow};
@@ -15,12 +14,17 @@ use cocoa::appkit::{NSColor, NSWindow};
 use cocoa::base::{id, nil, NO};
 #[cfg(target_os = "macos")]
 use objc::{msg_send, sel, sel_impl};
+
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+mod wrappers;
+use wrappers::{WrapperExt, apply_all_wrappers, submit_chat_message, set_offline_state, emit_launcher_shown, emit_settings_changed};
+use wrappers::config::Urls;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct AppSettings {
-    new_chat_default: bool,
-    notifications_enabled: bool,
+pub struct AppSettings {
+    pub new_chat_default: bool,
+    pub notifications_enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -30,267 +34,6 @@ impl Default for AppSettings {
             notifications_enabled: true,
         }
     }
-}
-
-// JavaScript to inject custom styles that hide UI elements overlapping with title bar
-fn get_hide_titlebar_overlap_js() -> String {
-    r#"
-    (function() {
-        const STYLE_ID = 'kimi-custom-styles';
-        
-        function injectStyles() {
-            // Avoid duplicate injection
-            if (document.getElementById(STYLE_ID)) return;
-            
-            const style = document.createElement('style');
-            style.id = STYLE_ID;
-            style.textContent = `
-                /* Hide UI elements that might overlap with title bar */
-                .app-header > button:first-child,
-                header button:first-child {
-                    display: none !important;
-                }
-                
-                /* Add top padding to header to clear macOS traffic lights */
-                .app-header,
-                header {
-                    padding-top: 2.5rem !important;
-                }
-            `;
-            document.head.appendChild(style);
-            
-            console.log('[Kimi] Custom styles injected');
-        }
-        
-        // Retry until DOM is ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', injectStyles);
-        } else {
-            injectStyles();
-        }
-        
-        // Re-inject on dynamic navigation (React SPA)
-        new MutationObserver(() => injectStyles()).observe(
-            document.documentElement, 
-            { childList: true, subtree: true }
-        );
-    })();
-    "#.to_string()
-}
-
-// JavaScript to inject message into Kimi's chat input with retry logic
-// Emits 'inject-result' Tauri event with { success: bool, error?: string }
-fn get_inject_message_js(message: &str) -> String {
-    let escaped_message = message
-        .replace('\\', "\\\\")
-        .replace('`', "\\`")
-        .replace('$', "\\$")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r");
-
-    format!(
-        r#"
-        (function() {{
-            const message = `{}`;
-            console.log('[Kimi] Raw message received:', message);
-            console.log('[Kimi] Message length:', message.length);
-            const maxRetries = 15;
-            const retryDelay = 300;
-            const totalTimeout = 8000;
-            let retryCount = 0;
-            let timedOut = false;
-            
-            // Emit result back to Tauri so the launcher can show feedback
-            function emitResult(success, error) {{
-                if (window.__TAURI__) {{
-                    window.__TAURI__.event.emit('inject-result', {{ success, error: error || null }});
-                }}
-            }}
-            
-            // Global timeout to prevent infinite waiting
-            const timeoutId = setTimeout(() => {{
-                timedOut = true;
-                const msg = 'Message injection timed out after ' + totalTimeout + 'ms';
-                console.error('[Kimi]', msg);
-                emitResult(false, msg);
-            }}, totalTimeout);
-            
-            function findTextarea() {{
-                // Kimi uses a contenteditable div with class "chat-input-editor"
-                return document.querySelector('.chat-input-editor')
-                    || document.querySelector('div[contenteditable="true"]')
-                    || document.querySelector('textarea[placeholder*="Ask"]')
-                    || document.querySelector('textarea[placeholder*="Message"]')
-                    || document.querySelector('textarea[placeholder*="ask"]')
-                    || document.querySelector('textarea[data-testid]')
-                    || document.querySelector('textarea');
-            }}
-            
-            async function injectMessage() {{
-                if (timedOut) return;
-                
-                // Wait for page to be fully loaded and interactive
-                if (document.readyState !== 'complete') {{
-                    console.log('[Kimi] Page not ready yet, waiting...');
-                    await new Promise(resolve => {{
-                        window.addEventListener('load', resolve, {{ once: true }});
-                        // Fallback timeout in case load event already fired
-                        setTimeout(resolve, 500);
-                    }});
-                }}
-                
-                // Additional wait for React to initialize
-                await new Promise(r => setTimeout(r, 200));
-                
-                const textarea = findTextarea();
-                
-                if (!textarea) {{
-                    retryCount++;
-                    if (retryCount < maxRetries) {{
-                        console.log('[Kimi] Waiting for textarea... attempt', retryCount);
-                        setTimeout(injectMessage, retryDelay);
-                        return;
-                    }}
-                    clearTimeout(timeoutId);
-                    const msg = 'Could not find chat input after ' + maxRetries + ' attempts';
-                    console.error('[Kimi]', msg);
-                    emitResult(false, msg);
-                    return;
-                }}
-                
-                console.log('[Kimi] Found textarea:', textarea.tagName, 'class:', textarea.className);
-                console.log('[Kimi] Message to inject:', message);
-                
-                try {{
-                    // Handle Kimi's contenteditable div
-                    if (textarea.classList && textarea.classList.contains('chat-input-editor')) {{
-                        // Enable editing first
-                        textarea.contentEditable = 'true';
-                        
-                        // Focus
-                        textarea.focus();
-                        
-                        // Wait a bit for focus to take effect
-                        await new Promise(r => setTimeout(r, 50));
-                        
-                        // Clear existing content
-                        textarea.innerHTML = '';
-                        
-                        // Insert text using execCommand (most reliable for React)
-                        document.execCommand('insertText', false, message);
-                        
-                        console.log('[Kimi] Inserted text via execCommand:', message);
-                        console.log('[Kimi] Current textarea content:', textarea.innerText);
-                        
-                        // Only dispatch one input event
-                        textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                        
-                        console.log('[Kimi] Submitting in 300ms');
-                        setTimeout(() => submitForm(textarea), 300);
-                        return;
-                    }}
-                    
-                    // Handle contenteditable div (common in modern chat UIs)
-                    if (textarea.contentEditable === 'true') {{
-                        textarea.focus();
-                        textarea.innerHTML = '';
-                        const textNode = document.createTextNode(message);
-                        textarea.appendChild(textNode);
-                        
-                        const range = document.createRange();
-                        range.selectNodeContents(textarea);
-                        range.collapse(false);
-                        const selection = window.getSelection();
-                        selection.removeAllRanges();
-                        selection.addRange(range);
-                        
-                        textarea.dispatchEvent(new InputEvent('input', {{
-                            bubbles: true,
-                            inputType: 'insertText',
-                            data: message
-                        }}));
-                        
-                        setTimeout(() => submitForm(textarea), 300);
-                        return;
-                    }}
-                    
-                    // Use native setter to properly update React state
-                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                        window.HTMLTextAreaElement.prototype, 
-                        'value'
-                    ).set;
-                    
-                    nativeInputValueSetter.call(textarea, message);
-                    
-                    // Dispatch events to notify React
-                    textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    textarea.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    
-                    // Focus the textarea
-                    textarea.focus();
-                    
-                    // Submit after input is set
-                    setTimeout(() => submitForm(textarea), 300);
-                }} catch (err) {{
-                    clearTimeout(timeoutId);
-                    const msg = 'Failed to set message: ' + err.message;
-                    console.error('[Kimi]', msg);
-                    emitResult(false, msg);
-                }}
-            }}
-            
-            let submitted = false;
-            
-            function submitForm(textarea) {{
-                if (timedOut || submitted) return;
-                submitted = true;
-                clearTimeout(timeoutId);
-                
-                console.log('[Kimi] Submitting form, textarea content:', textarea.innerText || textarea.value);
-                
-                // Look for send button - try multiple selectors
-                // Kimi uses .send-button-container
-                const sendBtn = document.querySelector('.send-button-container:not(.disabled)')
-                    || document.querySelector('.send-button-container')
-                    || document.querySelector('button[type="submit"]')
-                    || document.querySelector('button[aria-label*="send" i]')
-                    || document.querySelector('button[aria-label*="Send" i]')
-                    || document.querySelector('button[data-testid*="send" i]')
-                    || document.querySelector('form button:last-of-type')
-                    || document.querySelector('button svg[class*="send" i]')?.closest('button');
-                
-                console.log('[Kimi] Send button found:', !!sendBtn);
-                
-                if (sendBtn) {{
-                    console.log('[Kimi] Clicking send button:', sendBtn.className);
-                    sendBtn.click();
-                    emitResult(true);
-                }} else {{
-                    // If no button found, try pressing Enter
-                    console.log('[Kimi] No send button, trying Enter key');
-                    if (textarea) {{
-                        textarea.dispatchEvent(new KeyboardEvent('keydown', {{
-                            key: 'Enter',
-                            code: 'Enter',
-                            keyCode: 13,
-                            which: 13,
-                            bubbles: true,
-                            cancelable: true
-                        }}));
-                    }}
-                    emitResult(true);
-                }}
-            }}
-            
-            // Start the injection process immediately (no external delay needed)
-            injectMessage().catch(err => {{
-                console.error('[Kimi] Injection error:', err);
-                emitResult(false, err.message);
-            }});
-        }})();
-    "#,
-        escaped_message
-    )
 }
 
 #[tauri::command]
@@ -321,71 +64,10 @@ async fn toggle_launcher(app: AppHandle) -> Result<(), String> {
             launcher.center().map_err(|e| e.to_string())?;
             launcher.show().map_err(|e| e.to_string())?;
             launcher.set_focus().map_err(|e| e.to_string())?;
-            // Emit event to clear and focus input
-            let _ = launcher.emit("launcher-shown", ());
+            emit_launcher_shown(&app);
         }
     }
     Ok(())
-}
-
-const CHAT_URL: &str = "https://www.kimi.com/";
-const BOT_URL: &str = "https://www.kimi.com/bot";
-
-// JavaScript to inject a MutationObserver that detects when the AI finishes responding.
-// It watches for the "stop generating" button to disappear, which signals completion.
-// Emits 'response-complete' Tauri event when the response finishes.
-fn get_response_watcher_js() -> String {
-    r#"
-    (function() {
-        if (window.__kimiResponseWatcher) return;
-        window.__kimiResponseWatcher = true;
-        
-        const CHECK_INTERVAL = 500;
-        const INITIAL_DELAY = 2000;
-        let wasStreaming = false;
-        let checkCount = 0;
-        const MAX_CHECKS = 600; // 5 minutes max watch time
-        
-        function isStreaming() {
-            // Check for stop/cancel button which appears during streaming
-            const stopBtn = document.querySelector('button[aria-label*="stop" i]')
-                || document.querySelector('button[aria-label*="Stop" i]')
-                || document.querySelector('button[aria-label*="cancel" i]')
-                || document.querySelector('button[data-testid*="stop" i]');
-            return !!stopBtn;
-        }
-        
-        // Wait for streaming to start before watching for completion
-        setTimeout(() => {
-            const intervalId = setInterval(() => {
-                checkCount++;
-                
-                if (checkCount > MAX_CHECKS) {
-                    clearInterval(intervalId);
-                    window.__kimiResponseWatcher = false;
-                    return;
-                }
-                
-                const streaming = isStreaming();
-                
-                if (streaming) {
-                    wasStreaming = true;
-                }
-                
-                // Streaming just stopped (was streaming, now it's not)
-                if (wasStreaming && !streaming) {
-                    clearInterval(intervalId);
-                    window.__kimiResponseWatcher = false;
-                    console.log('[Kimi] Response complete');
-                    if (window.__TAURI__) {
-                        window.__TAURI__.event.emit('response-complete', {});
-                    }
-                }
-            }, CHECK_INTERVAL);
-        }, INITIAL_DELAY);
-    })();
-    "#
-    .to_string()
 }
 
 #[tauri::command]
@@ -400,15 +82,12 @@ async fn show_main_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn navigate_to_offline(app: AppHandle) -> Result<(), String> {
     if let Some(main_window) = app.get_webview_window("main") {
-        // Navigate to the local offline/fallback page
         let url = "tauri://localhost/index.html"
             .parse::<tauri::Url>()
             .map_err(|e| e.to_string())?;
         main_window.navigate(url).map_err(|e| e.to_string())?;
-        // Switch to offline state after navigation
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        let _ = main_window
-            .eval("document.getElementById('main-container').className = 'container offline';");
+        let _ = set_offline_state(&main_window);
     }
     Ok(())
 }
@@ -416,7 +95,7 @@ async fn navigate_to_offline(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn navigate_to_chat(app: AppHandle) -> Result<(), String> {
     if let Some(main_window) = app.get_webview_window("main") {
-        let url = CHAT_URL.parse::<tauri::Url>().map_err(|e| e.to_string())?;
+        let url = Urls::CHAT.parse::<tauri::Url>().map_err(|e| e.to_string())?;
         main_window.navigate(url).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -424,43 +103,29 @@ async fn navigate_to_chat(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn submit_message(app: AppHandle, message: String, new_chat: bool, bot_mode: bool) -> Result<(), String> {
-    // Hide the launcher first
+    use wrappers::config::Timeouts;
+    
     if let Some(launcher) = app.get_webview_window("launcher") {
         launcher.hide().map_err(|e| e.to_string())?;
     }
 
-    // Show and focus main window
     if let Some(main_window) = app.get_webview_window("main") {
         main_window.show().map_err(|e| e.to_string())?;
         main_window.set_focus().map_err(|e| e.to_string())?;
 
         if bot_mode {
-            // Navigate to bot mode page
-            let url = BOT_URL.parse::<tauri::Url>().map_err(|e| e.to_string())?;
+            let url = Urls::BOT.parse::<tauri::Url>().map_err(|e| e.to_string())?;
             main_window.navigate(url).map_err(|e| e.to_string())?;
-            // Wait longer for bot page to fully load and initialize
-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(Timeouts::BOT_PAGE_LOAD_WAIT)).await;
         } else if new_chat {
-            // Navigate to root to start a new chat
-            let url = CHAT_URL.parse::<tauri::Url>().map_err(|e| e.to_string())?;
+            let url = Urls::CHAT.parse::<tauri::Url>().map_err(|e| e.to_string())?;
             main_window.navigate(url).map_err(|e| e.to_string())?;
-            // Wait for page to load
-            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(Timeouts::PAGE_LOAD_WAIT)).await;
         } else {
-            // Small delay to let the window become visible
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(Timeouts::WINDOW_VISIBLE_DELAY)).await;
         }
 
-        // Inject the message — JS will emit 'inject-result' event with success/failure.
-        // The injected JS has robust retry logic (up to 15 attempts / 8s timeout)
-        // to wait for the textarea to become available after navigation.
-        let js = get_inject_message_js(&message);
-        main_window.eval(&js).map_err(|e| e.to_string())?;
-
-        // Inject response watcher to detect when the AI finishes responding.
-        // This will emit 'response-complete' event for notification handling.
-        let watcher_js = get_response_watcher_js();
-        main_window.eval(&watcher_js).map_err(|e| e.to_string())?;
+        let _ = submit_chat_message(&main_window, &message);
     }
 
     Ok(())
@@ -484,9 +149,7 @@ async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), Stri
     let value = serde_json::to_value(&settings).map_err(|e| e.to_string())?;
     store.set("app_settings", value);
     store.save().map_err(|e| e.to_string())?;
-
-    // Emit settings-changed event so other windows can react
-    let _ = app.emit("settings-changed", &settings);
+    emit_settings_changed(&app, &settings);
     Ok(())
 }
 
@@ -573,16 +236,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn setup_global_shortcut(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    // Platform-specific shortcut: Alt+Space on Windows, Option+Space on macOS
-    #[cfg(target_os = "macos")]
     let shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Space);
-
-    #[cfg(target_os = "windows")]
-    let shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Space);
-
-    #[cfg(target_os = "linux")]
-    let shortcut = Shortcut::new(Some(Modifiers::ALT), Code::Space);
-
     let app_handle = app.clone();
 
     app.global_shortcut()
@@ -632,22 +286,18 @@ pub fn run() {
             open_external_link,
         ])
         .setup(|app| {
-            // Setup system tray
             if let Err(e) = setup_tray(app.handle()) {
                 eprintln!("Failed to setup tray: {}", e);
             }
 
-            // Setup global shortcut
             if let Err(e) = setup_global_shortcut(app.handle()) {
                 eprintln!("Failed to setup global shortcut: {}", e);
             }
 
-            // Handle main window close - hide instead of quit
             if let Some(main_window) = app.get_webview_window("main") {
                 let app_handle = app.handle().clone();
                 main_window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        // Prevent close, hide instead
                         api.prevent_close();
                         if let Some(window) = app_handle.get_webview_window("main") {
                             let _ = window.hide();
@@ -656,12 +306,9 @@ pub fn run() {
                 });
             }
 
-            // Listen for response-complete events and send a notification
-            // if the main window is not focused (user switched away).
             {
                 let app_handle = app.handle().clone();
                 app.listen("response-complete", move |_event| {
-                    // Check if notifications are enabled in settings
                     let notifications_enabled = {
                         use tauri_plugin_store::StoreExt;
                         app_handle
@@ -687,11 +334,10 @@ pub fn run() {
                         let _ = app_handle
                             .notification()
                             .builder()
-                        .title("Kimi")
-                        .body("Response ready")
+                            .title("Kimi")
+                            .body("Response ready")
                             .show();
 
-                        // Show main window (don't auto-focus — let user click notification)
                         if let Some(window) = app_handle.get_webview_window("main") {
                             let _ = window.show();
                         }
@@ -699,7 +345,6 @@ pub fn run() {
                 });
             }
 
-            // Handle launcher losing focus - hide it
             if let Some(launcher) = app.get_webview_window("launcher") {
                 let app_handle = app.handle().clone();
                 launcher.on_window_event(move |event| {
@@ -711,7 +356,6 @@ pub fn run() {
                 });
             }
 
-            // Make launcher window fully transparent on macOS for rounded corners
             #[cfg(target_os = "macos")]
             #[allow(deprecated)]
             {
@@ -719,11 +363,9 @@ pub fn run() {
                     if let Ok(ns_window) = launcher.ns_window() {
                         let ns_window = ns_window as id;
                         unsafe {
-                            // Set window background to clear
                             let clear_color = NSColor::clearColor(nil);
                             ns_window.setBackgroundColor_(clear_color);
 
-                            // Disable WKWebView background drawing via private API
                             let content_view: id = msg_send![ns_window, contentView];
                             if !content_view.is_null() {
                                 let subviews: id = msg_send![content_view, subviews];
@@ -738,136 +380,14 @@ pub fn run() {
                 }
             }
 
-            // Inject PWA-aware connectivity monitoring into the main window.
-            // Respects Le Chat's service worker for offline caching — only falls back
-            // to the local offline page when no service worker is registered (first launch).
             if let Some(main_window) = app.get_webview_window("main") {
-                let connectivity_js = r#"
-                    (function() {
-                        const CHAT_URL = 'https://www.kimi.com/';
-
-                        // Check if Kimi's service worker is registered
-                        async function checkServiceWorker() {
-                            if (!('serviceWorker' in navigator)) {
-                                console.log('[Kimi] Service workers not supported in this webview');
-                                return { supported: false, registered: false };
-                            }
-                            try {
-                                const registrations = await navigator.serviceWorker.getRegistrations();
-                                const hasSW = registrations.length > 0;
-                                console.log('[Kimi] Service worker supported: true, registered:', hasSW,
-                                    hasSW ? '(PWA active)' : '(no PWA cache yet)');
-                                for (const reg of registrations) {
-                                    console.log('[Kimi]   SW scope:', reg.scope, 'state:',
-                                        reg.active ? 'active' : reg.installing ? 'installing' : reg.waiting ? 'waiting' : 'unknown');
-                                }
-                                return { supported: true, registered: hasSW };
-                            } catch (e) {
-                                console.log('[Kimi] Service worker check failed:', e.message);
-                                return { supported: true, registered: false };
-                            }
-                        }
-
-                        // Monitor online/offline events
-                        window.addEventListener('offline', () => {
-                            console.log('[Kimi] Browser went offline');
-                        });
-                        window.addEventListener('online', () => {
-                            console.log('[Kimi] Browser came online — reloading');
-                            if (window.location.href.includes('www.kimi.com')) {
-                                window.location.reload();
-                            } else {
-                                window.location.href = CHAT_URL;
-                            }
-                        });
-
-                        // Check if page loaded successfully after a delay.
-                        // If the PWA service worker is registered, let it handle offline.
-                        // Only fall back to the local offline page on first launch with no cache.
-                        setTimeout(async () => {
-                            const isErrorPage = !navigator.onLine
-                                || document.title.toLowerCase().includes('error')
-                                || document.title.toLowerCase().includes('not found')
-                                || document.title === ''
-                                || (document.body && document.body.innerText.length < 50
-                                    && !document.querySelector('[data-sidebar]'));
-
-                            if (!isErrorPage || window.location.href.includes('tauri')) {
-                                // Page loaded fine or we're on a local page — just log SW status
-                                await checkServiceWorker();
-                                return;
-                            }
-
-                            // Page failed to load — check if PWA service worker can handle it
-                            const sw = await checkServiceWorker();
-                            if (sw.registered) {
-                                // Reload guard: prevent infinite reload loop via sessionStorage flag
-                                const reloadKey = '__kimi_sw_reload';
-                                if (sessionStorage.getItem(reloadKey)) {
-                                    console.log('[Kimi] Already tried SW reload — falling back to offline page');
-                                    sessionStorage.removeItem(reloadKey);
-                                    if (window.__TAURI__) {
-                                        window.__TAURI__.core.invoke('navigate_to_offline').catch(() => {});
-                                    }
-                                } else {
-                                    sessionStorage.setItem(reloadKey, '1');
-                                    console.log('[Kimi] Page failed but PWA service worker is active — reloading to use cache');
-                                    window.location.reload();
-                                }
-                            } else {
-                                // No service worker (first launch or SW not installed) — local offline page
-                                console.log('[Kimi] Page failed and no service worker — showing offline page');
-                                if (window.__TAURI__) {
-                                    window.__TAURI__.core.invoke('navigate_to_offline').catch(() => {});
-                                }
-                            }
-                        }, 5000);
-                    })();
-                "#;
-                let _ = main_window.eval(connectivity_js);
-            }
-
-            // Platform-specific window configuration and style injection
-            if let Some(main_window) = app.get_webview_window("main") {
+                apply_all_wrappers(&main_window);
+                
                 #[cfg(target_os = "macos")]
                 {
-                    // macOS: Use overlay title bar style with hidden title
                     let _ = main_window.set_title_bar_style(TitleBarStyle::Overlay);
-                    // Inject CSS to hide UI elements overlapping with traffic lights
-                    let js = get_hide_titlebar_overlap_js();
-                    let _ = main_window.eval(&js);
+                    let _ = main_window.inject_titlebar_styles();
                 }
-
-                // Inject script to intercept external link clicks and open in default browser
-                let intercept_links_js = r#"
-                    (function() {
-                        if (window.__kimiLinkInterceptor) return;
-                        window.__kimiLinkInterceptor = true;
-                        
-                        document.addEventListener('click', function(e) {
-                            const link = e.target.closest('a[href]');
-                            if (!link) return;
-                            
-                            const href = link.getAttribute('href');
-                            if (!href) return;
-                            
-                            // Check if it's an external link (not kimi.com or relative)
-                            const isExternal = href.startsWith('http') && !href.includes('kimi.com') && !href.includes('moonshot.cn');
-                            const isMailto = href.startsWith('mailto:');
-                            
-                            if (isExternal || isMailto) {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                if (window.__TAURI__) {
-                                    window.__TAURI__.core.invoke('open_external_link', { url: href }).catch(console.error);
-                                }
-                            }
-                        }, true);
-                        
-                        console.log('[Kimi] External link interceptor installed');
-                    })();
-                "#;
-                let _ = main_window.eval(intercept_links_js);
             }
 
             Ok(())
@@ -875,7 +395,6 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {
-            // Handle macOS dock icon click to reopen window
             #[cfg(target_os = "macos")]
             if let RunEvent::Reopen { .. } = _event {
                 if let Some(window) = _app.get_webview_window("main") {
@@ -889,6 +408,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wrappers::{escape_js, build_js};
+    use wrappers::config::{Selectors, Timeouts, Urls};
 
     #[test]
     fn test_app_settings_default() {
@@ -914,11 +435,8 @@ mod tests {
 
     #[test]
     fn test_app_settings_deserialize_missing_fields_uses_defaults() {
-        // Simulate a stored JSON that's missing a field (e.g., after adding a new setting)
         let json = serde_json::json!({ "new_chat_default": false });
         let result: Result<AppSettings, _> = serde_json::from_value(json);
-        // Strict deserialization will fail — this is expected since we don't use
-        // #[serde(default)]. This test documents the current behavior.
         assert!(
             result.is_err(),
             "Missing fields should fail without #[serde(default)]"
@@ -926,76 +444,98 @@ mod tests {
     }
 
     #[test]
+    fn test_escape_js_escapes_backticks() {
+        let escaped = escape_js("code `inline` here");
+        assert!(escaped.contains(r"\`inline\`"));
+        assert!(!escaped.contains("code `inline` here"));
+    }
+
+    #[test]
+    fn test_escape_js_escapes_backslashes() {
+        let escaped = escape_js(r"path\to\file");
+        assert!(escaped.contains(r"path\\to\\file"));
+    }
+
+    #[test]
+    fn test_escape_js_escapes_dollar_signs() {
+        let escaped = escape_js("cost is $100");
+        assert!(escaped.contains(r"cost is \$100"));
+    }
+
+    #[test]
+    fn test_escape_js_escapes_newlines() {
+        let escaped = escape_js("line1\nline2\rline3");
+        assert!(escaped.contains(r"line1\nline2\rline3"));
+    }
+
+    #[test]
+    fn test_escape_js_handles_empty_string() {
+        let escaped = escape_js("");
+        assert_eq!(escaped, "");
+    }
+
+    #[test]
+    fn test_build_js_replaces_placeholders() {
+        let template = "Hello {{name}}, you are {{age}} years old";
+        let result = build_js(template, &[("name", "Alice"), ("age", "30")]);
+        assert_eq!(result, "Hello Alice, you are 30 years old");
+    }
+
+    #[test]
+    fn test_build_js_handles_missing_placeholders() {
+        let template = "Hello {{name}}";
+        let result = build_js(template, &[]);
+        assert_eq!(result, "Hello {{name}}");
+    }
+
+    #[test]
     fn test_inject_message_js_simple() {
-        let js = get_inject_message_js("Hello world");
+        let js = build_js(wrappers::INJECT_MESSAGE_JS, &[("message", "Hello world")]);
         assert!(js.contains("Hello world"));
         assert!(js.contains("emitResult"));
         assert!(js.contains("findTextarea"));
     }
 
     #[test]
-    fn test_inject_message_js_escapes_backticks() {
-        let js = get_inject_message_js("code `inline` here");
-        assert!(js.contains(r"\`inline\`"));
-        assert!(!js.contains("code `inline` here"));
-    }
-
-    #[test]
-    fn test_inject_message_js_escapes_backslashes() {
-        let js = get_inject_message_js(r"path\to\file");
-        assert!(js.contains(r"path\\to\\file"));
-    }
-
-    #[test]
-    fn test_inject_message_js_escapes_dollar_signs() {
-        let js = get_inject_message_js("cost is $100");
-        assert!(js.contains(r"cost is \$100"));
-    }
-
-    #[test]
-    fn test_inject_message_js_escapes_newlines() {
-        let js = get_inject_message_js("line1\nline2\rline3");
-        assert!(js.contains(r"line1\nline2\rline3"));
-    }
-
-    #[test]
-    fn test_inject_message_js_handles_empty_string() {
-        let js = get_inject_message_js("");
-        assert!(js.contains("const message = ``"));
-    }
-
-    #[test]
-    fn test_inject_message_js_complex_input() {
-        // A realistic complex message with multiple special chars
-        let js = get_inject_message_js("Explain `async/await` in JS.\nThe cost is $50\\per unit.");
-        assert!(js.contains(r"\`async/await\`"));
-        assert!(js.contains(r"\$50"));
-        assert!(js.contains(r"\\per"));
-        assert!(js.contains(r"\n"));
-    }
-
-    #[test]
     fn test_response_watcher_js_is_valid() {
-        let js = get_response_watcher_js();
-        assert!(!js.is_empty());
-        assert!(js.contains("__kimiResponseWatcher"));
-        assert!(js.contains("response-complete"));
-        assert!(js.contains("isStreaming"));
+        assert!(!wrappers::RESPONSE_WATCHER_JS.is_empty());
+        assert!(wrappers::RESPONSE_WATCHER_JS.contains("__kimiResponseWatcher"));
+        assert!(wrappers::RESPONSE_WATCHER_JS.contains("response-complete"));
     }
 
     #[test]
-    fn test_hide_titlebar_overlap_js_is_valid() {
-        let js = get_hide_titlebar_overlap_js();
-        assert!(!js.is_empty());
-        assert!(js.contains("kimi-custom-styles"));
-        assert!(js.contains("data-sidebar"));
-        assert!(js.contains("MutationObserver"));
+    fn test_titlebar_overlap_js_is_valid() {
+        assert!(!wrappers::TITLEBAR_OVERLAP_JS.is_empty());
+        assert!(wrappers::TITLEBAR_OVERLAP_JS.contains("{{style_id}}"));
     }
 
     #[test]
-    fn test_chat_url_constant() {
-        assert_eq!(CHAT_URL, "https://www.kimi.com/");
-        assert!(CHAT_URL.starts_with("https://"));
-        assert!(CHAT_URL.contains("kimi.com"));
+    fn test_connectivity_js_is_valid() {
+        assert!(!wrappers::CONNECTIVITY_JS.is_empty());
+        assert!(wrappers::CONNECTIVITY_JS.contains("serviceWorker"));
+    }
+
+    #[test]
+    fn test_link_interceptor_js_is_valid() {
+        assert!(!wrappers::LINK_INTERCEPTOR_JS.is_empty());
+        assert!(wrappers::LINK_INTERCEPTOR_JS.contains("__kimiLinkInterceptor"));
+    }
+
+    #[test]
+    fn test_config_selectors() {
+        assert_eq!(Selectors::CHAT_INPUT, ".chat-input-editor");
+        assert_eq!(Selectors::SEND_BUTTON, ".send-button-container:not(.disabled)");
+    }
+
+    #[test]
+    fn test_config_timeouts() {
+        assert_eq!(Timeouts::INJECTION_TOTAL, 8000);
+        assert_eq!(Timeouts::INJECTION_MAX_RETRIES, 15);
+    }
+
+    #[test]
+    fn test_config_urls() {
+        assert_eq!(Urls::CHAT, "https://www.kimi.com/");
+        assert!(Urls::CHAT.starts_with("https://"));
     }
 }
