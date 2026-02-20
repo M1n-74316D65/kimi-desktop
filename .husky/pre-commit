@@ -1,0 +1,8 @@
+# Run lint-staged for formatting and linting
+bunx lint-staged
+
+# Type check TypeScript
+bun run typecheck
+
+# Run Rust tests
+cd src-tauri && cargo test --lib

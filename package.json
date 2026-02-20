@@ -8,9 +8,15 @@
     "build": "tsc && tauri build",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/**/*.ts && cd src-tauri && cargo clippy -- -D warnings",
+    "lint": "bun run lint:js && bun run lint:rust",
+    "lint:js": "eslint src/**/*.ts",
+    "lint:rust": "cd src-tauri && cargo clippy -- -D warnings",
     "format": "prettier --write \"src/**/*.{ts,js,json,css}\"",
-    "compile": "tsc"
+    "compile": "tsc",
+    "prepare": "husky",
+    "test": "bun run test:js && bun run test:rust",
+    "test:rust": "cd src-tauri && cargo test --lib",
+    "check": "bun run typecheck && bun run lint && bun run test"
   },
   "devDependencies": {
     "@eslint/js": "^9.26.1",
@@ -18,6 +24,8 @@
     "@types/node": "^22.15.18",
     "eslint": "^9.26.1",
     "eslint-config-prettier": "^10.1.5",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
     "prettier": "^3.6.1",
     "sharp": "^0.34.5",
     "typescript": "^5.8.3",
@@ -25,5 +33,14 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1"
+  },
+  "lint-staged": {
+    "src/**/*.{ts,js}": [
+      "prettier --write",
+      "eslint --fix"
+    ],
+    "src-tauri/**/*.rs": [
+      "cd src-tauri && cargo fmt"
+    ]
   }
 }
